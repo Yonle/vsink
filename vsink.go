@@ -493,63 +493,109 @@ func (m *SystemCaptureManager) EnforceMonitorRouting() error {
 	return firstErr
 }
 
-func (m *SystemCaptureManager) syncHardwareOutput() error {
-	defaultSink, err := m.client.GetDefaultSink()
+func (m *SystemCaptureManager) getBestHardwareSink() (string, error) {
+	sinks, err := m.client.Sinks()
 	if err != nil {
-		return fmt.Errorf("failed to get default sink: %w", err)
+		return "", fmt.Errorf("failed to enumerate sinks: %w", err)
 	}
 
-	if defaultSink.Name == m.captureSinkName {
+	// Build a map of currently active, real, and PLUGGED IN sinks
+	validSinks := make(map[string]bool)
+
+	for _, s := range sinks {
+		if s.Name == m.captureSinkName {
+			continue
+		}
+
+		// Check if the sink is physically unplugged
+		isUnplugged := false
+
+		if s.ActivePortName != "" {
+			for _, port := range s.Ports {
+				if port.Name == s.ActivePortName {
+					// PulseAudio port availability:
+					// 0 = Unknown, 1 = No (Unplugged), 2 = Yes (Plugged in)
+					if port.Available == 1 {
+						isUnplugged = true
+					}
+					break
+				}
+			}
+		}
+
+		if !isUnplugged {
+			validSinks[s.Name] = true
+		}
+	}
+
+	if len(validSinks) == 0 {
+		return "", errors.New("no physical hardware sinks available or plugged in")
+	}
+
+	// 1. Did the OS default point to a REAL, currently plugged-in sink?
+	defaultSink, err := m.client.GetDefaultSink()
+	if err == nil && defaultSink.Name != "" && defaultSink.Name != m.captureSinkName {
+		if validSinks[defaultSink.Name] {
+			return defaultSink.Name, nil
+		}
+	}
+
+	// 2. Is our current hardware sink still perfectly fine and plugged in? DO NOT SWITCH.
+	if m.hardwareSinkName != "" && validSinks[m.hardwareSinkName] {
+		return m.hardwareSinkName, nil
+	}
+
+	// 3. Fallback: Our current sink was unplugged, and OS default is useless.
+	// Just pick the first sink that is physically plugged in (or unknown state).
+	var fallback string
+	for name := range validSinks {
+		fallback = name
+		// If we wanted to prioritize certain sink priorities we could do it here,
+		// but taking the first available valid sink is usually enough.
+		break
+	}
+
+	return fallback, nil
+}
+
+func (m *SystemCaptureManager) syncHardwareOutput() error {
+	newHardwareSink, err := m.getBestHardwareSink()
+	if err != nil {
+		// Nothing valid to switch to, just wait.
 		return nil
 	}
 
-	if defaultSink.Name == "" || defaultSink.Name == m.hardwareSinkName {
-		return nil
-	}
-
-	if _, err := m.getSink(defaultSink.Name); err != nil {
+	// If the best sink is already our current sink, do absolutely nothing.
+	if newHardwareSink == m.hardwareSinkName {
 		return nil
 	}
 
 	fmt.Printf(
 		"Hardware output changed: %s -> %s\n",
 		m.hardwareSinkName,
-		defaultSink.Name,
+		newHardwareSink,
 	)
 
-	m.hardwareSinkName = defaultSink.Name
+	m.hardwareSinkName = newHardwareSink
 
 	if err := m.recreateLoopback(); err != nil {
-		return fmt.Errorf(
-			"failed to retarget loopback: %w",
-			err,
-		)
+		return fmt.Errorf("failed to retarget loopback: %w", err)
 	}
 
 	if err := m.client.SetDefaultSink(m.captureSinkName); err != nil {
-		return fmt.Errorf(
-			"failed to restore capture sink as default: %w",
-			err,
-		)
+		return fmt.Errorf("failed to restore capture sink as default: %w", err)
 	}
 
 	if err := m.enforceBypass(); err != nil {
-		return fmt.Errorf(
-			"failed to update bypass routing: %w",
-			err,
-		)
+		return fmt.Errorf("failed to update bypass routing: %w", err)
 	}
 
 	if err := m.EnforceMonitorRouting(); err != nil {
-		return fmt.Errorf(
-			"failed to update monitor routing: %w",
-			err,
-		)
+		return fmt.Errorf("failed to update monitor routing: %w", err)
 	}
 
 	return nil
 }
-
 func (m *SystemCaptureManager) handleUpdate() {
 	if err := m.syncHardwareOutput(); err != nil {
 		fmt.Printf("Hardware output sync failed: %v\n", err)
