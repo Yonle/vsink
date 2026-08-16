@@ -140,7 +140,6 @@ func (m *SystemCaptureManager) initialize() error {
 		return fmt.Errorf("failed to set capture sink volume: %w", err)
 	}
 
-	// Only change system default sink if we are NOT in exclusive only-capture mode
 	if m.defaultSinkMode && len(m.onlyCaptureApps) == 0 {
 		if err := m.client.SetDefaultSink(m.captureSinkName); err != nil {
 			return fmt.Errorf("failed to set default sink: %w", err)
@@ -151,19 +150,12 @@ func (m *SystemCaptureManager) initialize() error {
 		return fmt.Errorf("failed to route existing streams: %w", err)
 	}
 
-	if err := m.EnforceMonitorRouting(); err != nil {
-		return fmt.Errorf("failed to route existing monitor streams: %w", err)
-	}
-
 	if err := m.createLoopback(); err != nil {
 		return err
 	}
 
 	if err := m.EnforceMonitorRouting(); err != nil {
-		return fmt.Errorf(
-			"failed to route monitor streams after loopback creation: %w",
-			err,
-		)
+		return fmt.Errorf("failed to route monitor streams: %w", err)
 	}
 
 	return nil
@@ -630,14 +622,6 @@ func (m *SystemCaptureManager) syncHardwareOutput() error {
 		if err := m.client.SetDefaultSink(m.captureSinkName); err != nil {
 			return fmt.Errorf("failed to restore capture sink as default: %w", err)
 		}
-	}
-
-	if err := m.enforceRouting(); err != nil {
-		return fmt.Errorf("failed to update routing: %w", err)
-	}
-
-	if err := m.EnforceMonitorRouting(); err != nil {
-		return fmt.Errorf("failed to update monitor routing: %w", err)
 	}
 
 	return nil
