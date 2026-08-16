@@ -31,7 +31,8 @@ type SystemCaptureManager struct {
 
 	movedMonitorOutputs map[uint32]struct{}
 
-	pactlPath string
+	pactlPath       string
+	defaultSinkMode bool
 
 	closeOnce sync.Once
 }
@@ -68,6 +69,7 @@ func buildAppSet(apps []string) map[string]struct{} {
 
 func NewSystemCaptureManager(
 	captureSinkName string,
+	defaultSinkMode bool,
 	bypassApps []string,
 	onlyCaptureApps []string,
 	monitorApps []string,
@@ -122,6 +124,7 @@ func NewSystemCaptureManager(
 		monitorApps:         buildAppSet(monitorApps),
 		movedMonitorOutputs: make(map[uint32]struct{}),
 		pactlPath:           pactlPath,
+		defaultSinkMode:     defaultSinkMode,
 	}
 
 	if err := manager.initialize(); err != nil {
@@ -138,7 +141,7 @@ func (m *SystemCaptureManager) initialize() error {
 	}
 
 	// Only change system default sink if we are NOT in exclusive only-capture mode
-	if len(m.onlyCaptureApps) == 0 {
+	if m.defaultSinkMode && len(m.onlyCaptureApps) == 0 {
 		if err := m.client.SetDefaultSink(m.captureSinkName); err != nil {
 			return fmt.Errorf("failed to set default sink: %w", err)
 		}
@@ -623,7 +626,7 @@ func (m *SystemCaptureManager) syncHardwareOutput() error {
 		return fmt.Errorf("failed to retarget loopback: %w", err)
 	}
 
-	if len(m.onlyCaptureApps) == 0 {
+	if m.defaultSinkMode && len(m.onlyCaptureApps) == 0 {
 		if err := m.client.SetDefaultSink(m.captureSinkName); err != nil {
 			return fmt.Errorf("failed to restore capture sink as default: %w", err)
 		}
@@ -929,7 +932,7 @@ func (m *SystemCaptureManager) Close() {
 		fmt.Println("Shutting down system capture...")
 
 		// Only restore default sink if we changed it in the first place
-		if len(m.onlyCaptureApps) == 0 && m.hardwareSinkName != "" {
+		if m.defaultSinkMode && len(m.onlyCaptureApps) == 0 && m.hardwareSinkName != "" {
 			if err := m.client.SetDefaultSink(m.hardwareSinkName); err != nil {
 				fmt.Printf(
 					"Failed to restore default sink: %v\n",
@@ -979,10 +982,17 @@ func main() {
 		"Comma-separated application names whose recordings should use the capture sink monitor",
 	)
 
+	defaultSinkMode := flag.Bool(
+		"defaultSinkMode",
+		false,
+		"Set the virtual sink as default sink. May help with some apps, but can cause issues with volume control.",
+	)
+
 	flag.Parse()
 
 	manager, err := NewSystemCaptureManager(
 		"SystemCaptureSink",
+		*defaultSinkMode,
 		parseApps(*bypassArg),
 		parseApps(*onlyCaptureArg),
 		parseApps(*monitorArg),
