@@ -150,12 +150,69 @@ func (m *SystemCaptureManager) initialize() error {
 		return err
 	}
 
+	m.cleanupExistingModules()
+
 	if err := m.enforceRouting(); err != nil {
 		return fmt.Errorf("failed to route streams: %w", err)
 	}
 
 	if err := m.EnforceMonitorRouting(); err != nil {
 		return fmt.Errorf("failed to route monitor streams: %w", err)
+	}
+
+	return nil
+}
+
+func (m *SystemCaptureManager) cleanupExistingModules() error {
+	modules, err := m.client.ModuleList()
+	if err != nil {
+		return fmt.Errorf("failed to enumerate modules: %w", err)
+	}
+
+	// Remove loopbacks first.
+	for _, module := range modules {
+		if module.Name != "module-loopback" {
+			continue
+		}
+
+		if !strings.Contains(module.Argument, "source="+m.captureSinkName+".monitor") {
+			continue
+		}
+
+		if module.Index == m.loopModuleIdx {
+			continue
+		}
+
+		if err := m.client.UnloadModule(module.Index); err != nil {
+			return fmt.Errorf(
+				"failed to unload existing loopback module %d: %w",
+				module.Index,
+				err,
+			)
+		}
+	}
+
+	// Then remove the virtual sink.
+	for _, module := range modules {
+		if module.Name != "module-null-sink" {
+			continue
+		}
+
+		if !strings.Contains(module.Argument, "sink_name="+m.captureSinkName) {
+			continue
+		}
+
+		if module.Index == m.nullModuleIdx {
+			continue
+		}
+
+		if err := m.client.UnloadModule(module.Index); err != nil {
+			return fmt.Errorf(
+				"failed to unload existing null sink module %d: %w",
+				module.Index,
+				err,
+			)
+		}
 	}
 
 	return nil
