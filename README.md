@@ -6,10 +6,12 @@ It can also:
 
 * Bypass selected applications from capture.
 * Route selected recording applications to the virtual sink monitor.
+* Exclusively capture selected applications into the virtual sink.
+* Optionally set the virtual sink as the system default sink.
 * Track physical output changes.
 * Restore audio routing on shutdown.
 
-This program is still in experimental phase, so expect dirty codes.
+This program is still in the experimental phase, so expect dirty code.
 
 ## Usage
 
@@ -21,43 +23,66 @@ go build -o vsink .
 ### Bypass applications
 
 ```sh
-./vsink -bypass discord,spotify,sto
+./vsink -bypass stoat-desktop,Discord
 ```
 
-Bypassed applications are routed directly to the physical sink.
+Bypassed applications are routed directly to the physical sink instead of the capture sink.
 
 ### Monitor applications
 
 ```sh
-./vsink -monitor obs,ffmpeg
+./vsink -monitor obs,ffmpeg,stoat-desktop,Discord
 ```
 
 Selected applications recording the physical output monitor are redirected to `SystemCaptureSink.monitor`.
 
+### Only capture selected applications
+
+```sh
+./vsink -onlyCapture firefox,mpv
+```
+
+Only the specified applications are routed into the capture sink. Other applications are left on the normal physical output.
+
+### Default sink mode
+
+```sh
+./vsink -defaultSinkMode
+```
+
+Sets the virtual sink as the system default sink.
+
+This may help applications that do not correctly follow explicit stream routing, but can interfere with volume control depending on the desktop environment or application.
+
 ### Combined
 
 ```sh
-./vsink -bypass discord,spotify -monitor obs
+./vsink \
+  -bypass Discord,Spotify,stoat-desktop \
+  -monitor obs,ffmpeg \
+  -onlyCapture Firefox,mpv
 ```
 
 ## Options
 
-| Option     | Description                                                         |
-| ---------- | ------------------------------------------------------------------- |
-| `-bypass`  | Comma-separated applications excluded from capture                  |
-| `-monitor` | Comma-separated applications redirected to the virtual sink monitor |
+| Option             | Description                                                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `-bypass`          | Comma-separated application names to bypass capture                                                          |
+| `-defaultSinkMode` | Set the virtual sink as the default sink. May help with some apps, but can cause issues with volume control. |
+| `-monitor`         | Comma-separated application names whose recordings should use the capture sink monitor                       |
+| `-onlyCapture`     | Comma-separated application names to exclusively capture into the capture sink                               |
 
 ## Requirements
 
 * Linux
-* PulseAudio
+* PulseAudio or PipeWire with `pipewire-pulse`
 * `pactl`
 * Go
 * `github.com/the-jonsey/pulseaudio`
 
 ## License
 
-Copyright 2026 Yonle <yonle@proton.me>
+Copyright 2026 Yonle [yonle@proton.me](mailto:yonle@proton.me)
 
 Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
 
