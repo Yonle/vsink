@@ -25,8 +25,9 @@ type SystemCaptureManager struct {
 	nullModuleIdx uint32
 	loopModuleIdx uint32
 
-	bypassApps  map[string]struct{}
-	monitorApps map[string]struct{}
+	bypassApps      map[string]struct{}
+	onlyCaptureApps map[string]struct{}
+	monitorApps     map[string]struct{}
 
 	movedMonitorOutputs map[uint32]struct{}
 
@@ -68,6 +69,7 @@ func buildAppSet(apps []string) map[string]struct{} {
 func NewSystemCaptureManager(
 	captureSinkName string,
 	bypassApps []string,
+	onlyCaptureApps []string,
 	monitorApps []string,
 ) (*SystemCaptureManager, error) {
 	if captureSinkName == "" {
@@ -116,6 +118,7 @@ func NewSystemCaptureManager(
 		captureSinkName:     captureSinkName,
 		nullModuleIdx:       nullModuleIdx,
 		bypassApps:          buildAppSet(bypassApps),
+		onlyCaptureApps:     buildAppSet(onlyCaptureApps),
 		monitorApps:         buildAppSet(monitorApps),
 		movedMonitorOutputs: make(map[uint32]struct{}),
 		pactlPath:           pactlPath,
@@ -134,8 +137,11 @@ func (m *SystemCaptureManager) initialize() error {
 		return fmt.Errorf("failed to set capture sink volume: %w", err)
 	}
 
-	if err := m.client.SetDefaultSink(m.captureSinkName); err != nil {
-		return fmt.Errorf("failed to set default sink: %w", err)
+	// Only change system default sink if we are NOT in exclusive only-capture mode
+	if len(m.onlyCaptureApps) == 0 {
+		if err := m.client.SetDefaultSink(m.captureSinkName); err != nil {
+			return fmt.Errorf("failed to set default sink: %w", err)
+		}
 	}
 
 	if err := m.routeExistingStreams(); err != nil {
@@ -192,6 +198,10 @@ func (m *SystemCaptureManager) isBypassed(input pulseaudio.SinkInput) bool {
 	return m.matchesApp(input.PropList, m.bypassApps)
 }
 
+func (m *SystemCaptureManager) isOnlyCaptured(input pulseaudio.SinkInput) bool {
+	return m.matchesApp(input.PropList, m.onlyCaptureApps)
+}
+
 func (m *SystemCaptureManager) isMonitoredApp(output pulseaudio.SourceOutput) bool {
 	return m.matchesApp(output.PropList, m.monitorApps)
 }
@@ -220,13 +230,14 @@ func (m *SystemCaptureManager) matchesApp(
 	return false
 }
 
+func (m *SystemCaptureManager) getSinks() ([]pulseaudio.Sink, error) {
+	return m.client.Sinks()
+}
+
 func (m *SystemCaptureManager) getSink(name string) (pulseaudio.Sink, error) {
-	sinks, err := m.client.Sinks()
+	sinks, err := m.getSinks()
 	if err != nil {
-		return pulseaudio.Sink{}, fmt.Errorf(
-			"failed to enumerate sinks: %w",
-			err,
-		)
+		return pulseaudio.Sink{}, fmt.Errorf("failed to enumerate sinks: %w", err)
 	}
 
 	for _, sink := range sinks {
@@ -334,12 +345,7 @@ func (m *SystemCaptureManager) routeExistingStreams() error {
 		}
 
 		targetID := captureSinkID
-		targetName := m.captureSinkName
-
-		if m.isBypassed(input) {
-			targetID = hardwareSinkID
-			targetName = m.hardwareSinkName
-		}
+		targetName := m.captureSessionTargetName(captureSinkID, hardwareSinkID, input)
 
 		if input.Sink == targetID {
 			continue
@@ -374,8 +380,27 @@ func (m *SystemCaptureManager) routeExistingStreams() error {
 	return firstErr
 }
 
-func (m *SystemCaptureManager) enforceBypass() error {
+func (m *SystemCaptureManager) captureSessionTargetName(captureSinkID, hardwareSinkID uint32, input pulseaudio.SinkInput) string {
+	if len(m.onlyCaptureApps) > 0 {
+		if m.isOnlyCaptured(input) {
+			return m.captureSinkName
+		}
+		return m.hardwareSinkName
+	}
+
+	if m.isBypassed(input) {
+		return m.hardwareSinkName
+	}
+	return m.captureSinkName
+}
+
+func (m *SystemCaptureManager) enforceRouting() error {
 	hardwareSinkID, err := m.getSinkID(m.hardwareSinkName)
+	if err != nil {
+		return err
+	}
+
+	captureSinkID, err := m.getSinkID(m.captureSinkName)
 	if err != nil {
 		return err
 	}
@@ -392,19 +417,36 @@ func (m *SystemCaptureManager) enforceBypass() error {
 			continue
 		}
 
-		if !m.isBypassed(input) {
-			continue
+		var targetID uint32
+		var targetName string
+
+		if len(m.onlyCaptureApps) > 0 {
+			if m.isOnlyCaptured(input) {
+				targetID = captureSinkID
+				targetName = m.captureSinkName
+			} else {
+				targetID = hardwareSinkID
+				targetName = m.hardwareSinkName
+			}
+		} else {
+			if m.isBypassed(input) {
+				targetID = hardwareSinkID
+				targetName = m.hardwareSinkName
+			} else {
+				targetID = captureSinkID
+				targetName = m.captureSinkName
+			}
 		}
 
-		if input.Sink == hardwareSinkID {
+		if input.Sink == targetID {
 			continue
 		}
 
 		name := appName(input.PropList, input.Name)
 
-		if err := m.moveSinkInput(input.Index, hardwareSinkID); err != nil {
+		if err := m.moveSinkInput(input.Index, targetID); err != nil {
 			fmt.Printf(
-				"Failed to bypass %q (%d): %v\n",
+				"Failed to adjust routing for %q (%d): %v\n",
 				name,
 				input.Index,
 				err,
@@ -418,8 +460,9 @@ func (m *SystemCaptureManager) enforceBypass() error {
 		}
 
 		fmt.Printf(
-			"Bypassed %s (%d)\n",
+			"Routed %s -> %s (%d)\n",
 			name,
+			targetName,
 			input.Index,
 		)
 	}
@@ -492,7 +535,7 @@ func (m *SystemCaptureManager) EnforceMonitorRouting() error {
 }
 
 func (m *SystemCaptureManager) getBestHardwareSink() (string, error) {
-	sinks, err := m.client.Sinks()
+	sinks, err := m.getSinks()
 	if err != nil {
 		return "", fmt.Errorf("failed to enumerate sinks: %w", err)
 	}
@@ -580,12 +623,14 @@ func (m *SystemCaptureManager) syncHardwareOutput() error {
 		return fmt.Errorf("failed to retarget loopback: %w", err)
 	}
 
-	if err := m.client.SetDefaultSink(m.captureSinkName); err != nil {
-		return fmt.Errorf("failed to restore capture sink as default: %w", err)
+	if len(m.onlyCaptureApps) == 0 {
+		if err := m.client.SetDefaultSink(m.captureSinkName); err != nil {
+			return fmt.Errorf("failed to restore capture sink as default: %w", err)
+		}
 	}
 
-	if err := m.enforceBypass(); err != nil {
-		return fmt.Errorf("failed to update bypass routing: %w", err)
+	if err := m.enforceRouting(); err != nil {
+		return fmt.Errorf("failed to update routing: %w", err)
 	}
 
 	if err := m.EnforceMonitorRouting(); err != nil {
@@ -594,13 +639,20 @@ func (m *SystemCaptureManager) syncHardwareOutput() error {
 
 	return nil
 }
+
 func (m *SystemCaptureManager) handleUpdate() {
 	if err := m.syncHardwareOutput(); err != nil {
 		fmt.Printf("Hardware output sync failed: %v\n", err)
+		return // Bail out early if hardware sync failed
 	}
 
-	if err := m.enforceBypass(); err != nil {
-		fmt.Printf("Bypass routing failed: %v\n", err)
+	// Verify our hardware sink is actually valid right now before routing
+	if _, err := m.getSink(m.hardwareSinkName); err != nil {
+		return // Sink is mid-transition, skip this tick safely
+	}
+
+	if err := m.enforceRouting(); err != nil {
+		fmt.Printf("Routing enforcement failed: %v\n", err)
 	}
 
 	if err := m.EnforceMonitorRouting(); err != nil {
@@ -626,7 +678,12 @@ func (m *SystemCaptureManager) Listen() error {
 	fmt.Printf("Physical output: %s\n", m.hardwareSinkName)
 	fmt.Printf("Capture sink: %s\n", m.captureSinkName)
 
-	if len(m.bypassApps) > 0 {
+	if len(m.onlyCaptureApps) > 0 {
+		fmt.Printf(
+			"Exclusive capture list: %s\n",
+			strings.Join(mapKeys(m.onlyCaptureApps), ", "),
+		)
+	} else if len(m.bypassApps) > 0 {
 		fmt.Printf(
 			"Bypass list: %s\n",
 			strings.Join(mapKeys(m.bypassApps), ", "),
@@ -871,7 +928,8 @@ func (m *SystemCaptureManager) Close() {
 
 		fmt.Println("Shutting down system capture...")
 
-		if m.hardwareSinkName != "" {
+		// Only restore default sink if we changed it in the first place
+		if len(m.onlyCaptureApps) == 0 && m.hardwareSinkName != "" {
 			if err := m.client.SetDefaultSink(m.hardwareSinkName); err != nil {
 				fmt.Printf(
 					"Failed to restore default sink: %v\n",
@@ -909,6 +967,12 @@ func main() {
 		"Comma-separated application names to bypass capture",
 	)
 
+	onlyCaptureArg := flag.String(
+		"onlyCapture",
+		"",
+		"Comma-separated application names to exclusively capture into the capture sink",
+	)
+
 	monitorArg := flag.String(
 		"monitor",
 		"",
@@ -920,6 +984,7 @@ func main() {
 	manager, err := NewSystemCaptureManager(
 		"SystemCaptureSink",
 		parseApps(*bypassArg),
+		parseApps(*onlyCaptureArg),
 		parseApps(*monitorArg),
 	)
 	if err != nil {
