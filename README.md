@@ -9,6 +9,8 @@ It can also:
 * Track physical output changes.
 * Restore audio routing on shutdown.
 
+This program is still in experimental phase, so expect dirty codes.
+
 ## Usage
 
 ```sh
