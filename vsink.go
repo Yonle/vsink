@@ -578,9 +578,6 @@ func (m *SystemCaptureManager) Listen() error {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigChan)
 
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
-
 	fmt.Println("System capture active.")
 	fmt.Printf("Physical output: %s\n", m.hardwareSinkName)
 	fmt.Printf("Capture sink: %s\n", m.captureSinkName)
@@ -604,9 +601,6 @@ func (m *SystemCaptureManager) Listen() error {
 	for {
 		select {
 		case <-updates:
-			m.handleUpdate()
-
-		case <-ticker.C:
 			m.handleUpdate()
 
 		case sig := <-sigChan:
