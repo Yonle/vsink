@@ -146,12 +146,12 @@ func (m *SystemCaptureManager) initialize() error {
 		}
 	}
 
-	if err := m.routeExistingStreams(); err != nil {
-		return fmt.Errorf("failed to route existing streams: %w", err)
-	}
-
 	if err := m.createLoopback(); err != nil {
 		return err
+	}
+
+	if err := m.enforceRouting(); err != nil {
+		return fmt.Errorf("failed to route streams: %w", err)
 	}
 
 	if err := m.EnforceMonitorRouting(); err != nil {
@@ -314,79 +314,6 @@ func appName(props map[string]string, fallback string) string {
 	}
 
 	return fallback
-}
-
-func (m *SystemCaptureManager) routeExistingStreams() error {
-	hardwareSinkID, err := m.getSinkID(m.hardwareSinkName)
-	if err != nil {
-		return err
-	}
-
-	captureSinkID, err := m.getSinkID(m.captureSinkName)
-	if err != nil {
-		return err
-	}
-
-	inputs, err := m.client.SinkInputs()
-	if err != nil {
-		return fmt.Errorf("failed to enumerate sink inputs: %w", err)
-	}
-
-	var firstErr error
-
-	for _, input := range inputs {
-		if input.OwnerModule == m.loopModuleIdx {
-			continue
-		}
-
-		targetID := captureSinkID
-		targetName := m.captureSessionTargetName(captureSinkID, hardwareSinkID, input)
-
-		if input.Sink == targetID {
-			continue
-		}
-
-		name := appName(input.PropList, input.Name)
-
-		if err := m.moveSinkInput(input.Index, targetID); err != nil {
-			fmt.Printf(
-				"Failed to route %q (%d) -> %q: %v\n",
-				name,
-				input.Index,
-				targetName,
-				err,
-			)
-
-			if firstErr == nil {
-				firstErr = err
-			}
-
-			continue
-		}
-
-		fmt.Printf(
-			"%s -> %s (%d)\n",
-			name,
-			targetName,
-			input.Index,
-		)
-	}
-
-	return firstErr
-}
-
-func (m *SystemCaptureManager) captureSessionTargetName(captureSinkID, hardwareSinkID uint32, input pulseaudio.SinkInput) string {
-	if len(m.onlyCaptureApps) > 0 {
-		if m.isOnlyCaptured(input) {
-			return m.captureSinkName
-		}
-		return m.hardwareSinkName
-	}
-
-	if m.isBypassed(input) {
-		return m.hardwareSinkName
-	}
-	return m.captureSinkName
 }
 
 func (m *SystemCaptureManager) enforceRouting() error {
