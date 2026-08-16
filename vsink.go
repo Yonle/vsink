@@ -33,6 +33,7 @@ type SystemCaptureManager struct {
 
 	pactlPath       string
 	defaultSinkMode bool
+	noLoopback      bool
 
 	closeOnce sync.Once
 }
@@ -70,6 +71,7 @@ func buildAppSet(apps []string) map[string]struct{} {
 func NewSystemCaptureManager(
 	captureSinkName string,
 	defaultSinkMode bool,
+	noLoopback bool,
 	bypassApps []string,
 	onlyCaptureApps []string,
 	monitorApps []string,
@@ -125,6 +127,7 @@ func NewSystemCaptureManager(
 		movedMonitorOutputs: make(map[uint32]struct{}),
 		pactlPath:           pactlPath,
 		defaultSinkMode:     defaultSinkMode,
+		noLoopback:          noLoopback,
 	}
 
 	if err := manager.initialize(); err != nil {
@@ -219,6 +222,10 @@ func (m *SystemCaptureManager) cleanupExistingModules() error {
 }
 
 func (m *SystemCaptureManager) createLoopback() error {
+	if m.noLoopback {
+		return nil
+	}
+
 	loopArgs := fmt.Sprintf(
 		"source=%s.monitor sink=%s adjust_time=1",
 		m.captureSinkName,
@@ -956,11 +963,18 @@ func main() {
 		"Set the virtual sink as default sink. May help with some apps, but can cause issues with volume control.",
 	)
 
+	noLoopback := flag.Bool(
+		"noLoopback",
+		false,
+		"Disable loopback. Any app in the virtual sink will not be played back to the main speaker (except bypassed apps)",
+	)
+
 	flag.Parse()
 
 	manager, err := NewSystemCaptureManager(
 		"SystemCaptureSink",
 		*defaultSinkMode,
+		*noLoopback,
 		parseApps(*bypassArg),
 		parseApps(*onlyCaptureArg),
 		parseApps(*monitorArg),
