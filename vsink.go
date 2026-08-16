@@ -19,9 +19,8 @@ import (
 type SystemCaptureManager struct {
 	client *pulseaudio.Client
 
-	hardwareSinkName       string
-	restoreDefaultSinkName string
-	captureSinkName        string
+	hardwareSinkName string
+	captureSinkName  string
 
 	nullModuleIdx uint32
 	loopModuleIdx uint32
@@ -112,15 +111,14 @@ func NewSystemCaptureManager(
 	}
 
 	manager := &SystemCaptureManager{
-		client:                 client,
-		hardwareSinkName:       origSink.Name,
-		restoreDefaultSinkName: origSink.Name,
-		captureSinkName:        captureSinkName,
-		nullModuleIdx:          nullModuleIdx,
-		bypassApps:             buildAppSet(bypassApps),
-		monitorApps:            buildAppSet(monitorApps),
-		movedMonitorOutputs:    make(map[uint32]struct{}),
-		pactlPath:              pactlPath,
+		client:              client,
+		hardwareSinkName:    origSink.Name,
+		captureSinkName:     captureSinkName,
+		nullModuleIdx:       nullModuleIdx,
+		bypassApps:          buildAppSet(bypassApps),
+		monitorApps:         buildAppSet(monitorApps),
+		movedMonitorOutputs: make(map[uint32]struct{}),
+		pactlPath:           pactlPath,
 	}
 
 	if err := manager.initialize(); err != nil {
