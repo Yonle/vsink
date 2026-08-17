@@ -137,11 +137,6 @@ func appName(props map[string]string, fallback string) string {
 }
 
 func (m *SystemCaptureManager) enforceRouting() error {
-	hardwareSinkID, err := m.getSinkID(m.hardwareSinkName)
-	if err != nil {
-		return err
-	}
-
 	captureSinkID, err := m.getSinkID(m.captureSinkName)
 	if err != nil {
 		return err
@@ -159,34 +154,19 @@ func (m *SystemCaptureManager) enforceRouting() error {
 			continue
 		}
 
-		var targetID uint32
-		var targetName string
-
-		if len(m.onlyCaptureApps) > 0 {
-			if m.isOnlyCaptured(input) {
-				targetID = captureSinkID
-				targetName = m.captureSinkName
-			} else {
-				targetID = hardwareSinkID
-				targetName = m.hardwareSinkName
-			}
-		} else {
-			if m.isBypassed(input) {
-				targetID = hardwareSinkID
-				targetName = m.hardwareSinkName
-			} else {
-				targetID = captureSinkID
-				targetName = m.captureSinkName
-			}
+		if len(m.onlyCaptureApps) > 0 && !m.isOnlyCaptured(input) {
+			continue
+		} else if m.isBypassed(input) {
+			continue
 		}
 
-		if input.Sink == targetID {
+		if input.Sink == captureSinkID {
 			continue
 		}
 
 		name := appName(input.PropList, input.Name)
 
-		if err := m.moveSinkInput(input.Index, targetID); err != nil {
+		if err := m.moveSinkInput(input.Index, captureSinkID); err != nil {
 			fmt.Printf(
 				"Failed to adjust routing for %q (%d): %v\n",
 				name,
@@ -204,7 +184,7 @@ func (m *SystemCaptureManager) enforceRouting() error {
 		fmt.Printf(
 			"Routed %s -> %s (%d)\n",
 			name,
-			targetName,
+			m.captureSinkName,
 			input.Index,
 		)
 	}
