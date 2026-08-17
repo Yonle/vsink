@@ -309,10 +309,16 @@ func main() {
 		"Disable loopback. Any app in the virtual sink will not be played back to the main speaker (except bypassed apps)",
 	)
 
+	vSinkName := flag.String(
+		"vSinkName",
+		"SystemCaptureSink",
+		"The name of the virtual sink",
+	)
+
 	flag.Parse()
 
 	manager, err := NewSystemCaptureManager(
-		"SystemCaptureSink",
+		*vSinkName,
 		*defaultSinkMode,
 		*noLoopback,
 		parseApps(*bypassArg),

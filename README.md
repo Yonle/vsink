@@ -71,6 +71,7 @@ This may help applications that do not correctly follow explicit stream routing,
 | `-defaultSinkMode` | Set the virtual sink as the default sink. May help with some apps, but can cause issues with volume control. |
 | `-monitor`         | Comma-separated application names whose recordings should use the capture sink monitor                       |
 | `-onlyCapture`     | Comma-separated application names to exclusively capture into the capture sink                               |
+| `-vSinkName`       | The name of the virtual sink                                                                                 |
 
 ## Requirements
 
